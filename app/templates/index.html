@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Gaussian Elimination</h1>
+            <div class="mode-selector">
+                <label for="mode-select">Mode:</label>
+                <select id="mode-select" onchange="changeMode()">
+                    <option value="fmc">FMC (Fewest Moves)</option>
+                    <option value="timed">Timed</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="info-panel">
+            <div class="info-item">
+                <span class="label">Size:</span>
+                <span class="value">{{ matrix.size }}×{{ matrix.size }}</span>
+            </div>
+            <div class="info-item">
+                <span class="label">Difficulty:</span>
+                <span class="value">{{ matrix.difficulty }}%</span>
+            </div>
+            <div class="info-item">
+                <span class="label">Compressibility:</span>
+                <span class="value">{{ matrix.compressibility }}%</span>
+            </div>
+            <div class="info-item">
+                <span class="label">Estimated Min Moves:</span>
+                <span class="value">{{ matrix.god_number }}</span>
+            </div>
+            <div class="info-item" id="moves-item">
+                <span class="label">Moves:</span>
+                <span class="value" id="moves-count">0</span>
+            </div>
+            <div class="info-item" id="time-item" style="display:none;">
+                <span class="label">Time:</span>
+                <span class="value" id="time-count">0:00</span>
+            </div>
+            <div class="info-item">
+                <span class="label">Status:</span>
+                <span class="value" id="status">Not Solved</span>
+            </div>
+        </div>
+
+        <div class="matrix-display" id="matrix-display">
+            <table class="matrix" id="matrix-table">
+                <tbody>
+                    {% for i in range(matrix.size) %}
+                    <tr>
+                        {% for j in range(matrix.size) %}
+                        <td class="coefficient">{{ "%.2f" | format(matrix.coefficients[i][j]) }}</td>
+                        {% endfor %}
+                        <td class="divider">|</td>
+                        <td class="output">{{ "%.2f" | format(matrix.augmented[i]) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="start-timed-container" id="start-timed-container" style="display:none;">
+            <button class="btn btn-start" onclick="startTimedSolve()">Start Solve</button>
+        </div>
+
+        <div class="transformation-input" id="transformation-container">
+            <input type="text" id="transformation-input" placeholder="Enter transformation (e.g., R1 = R1 / 2)" />
+            <button class="btn btn-secondary" onclick="applyTransformation()">Apply</button>
+            <div id="error-message" class="error-message"></div>
+        </div>
+
+        <div class="button-container">
+            <button class="btn btn-primary" onclick="location.href='/'">Generate New Matrix</button>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'fmc';
+        let timerInterval = null;
+        let startTime = null;
+        let timedStarted = false;
+        
+        function changeMode() {
+            const select = document.getElementById('mode-select');
+            currentMode = select.value;
+            
+            if (currentMode === 'timed') {
+                // Show start button, hide matrix and transformation input
+                document.getElementById('start-timed-container').style.display = 'block';
+                document.getElementById('matrix-display').style.display = 'none';
+                document.getElementById('transformation-container').style.display = 'none';
+                document.getElementById('moves-item').style.display = 'none';
+                document.getElementById('time-item').style.display = 'block';
+                timedStarted = false;
+            } else {
+                // FMC mode
+                document.getElementById('start-timed-container').style.display = 'none';
+                document.getElementById('matrix-display').style.display = 'block';
+                document.getElementById('transformation-container').style.display = 'block';
+                document.getElementById('moves-item').style.display = 'block';
+                document.getElementById('time-item').style.display = 'none';
+                
+                // Stop timer if running
+                if (timerInterval) clearInterval(timerInterval);
+                startTime = null;
+            }
+        }
+        
+        function startTimedSolve() {
+            // Show matrix and transformation input
+            document.getElementById('start-timed-container').style.display = 'none';
+            document.getElementById('matrix-display').style.display = 'block';
+            document.getElementById('transformation-container').style.display = 'block';
+            
+            // Start timer
+            timedStarted = true;
+            startTimer();
+            
+            // Focus on input field
+            document.getElementById('transformation-input').focus();
+        }
+        
+        function startTimer() {
+            if (timerInterval) clearInterval(timerInterval);
+            startTime = Date.now();
+            timerInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = elapsed % 60;
+                document.getElementById('time-count').textContent = 
+                    minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+            }, 100);
+        }
+        
+        function stopTimer() {
+            if (timerInterval) clearInterval(timerInterval);
+        }
+        
+        function applyTransformation() {
+            const input = document.getElementById('transformation-input');
+            const transformation = input.value.trim();
+            const errorDiv = document.getElementById('error-message');
+            
+            if (!transformation) {
+                errorDiv.textContent = 'Please enter a transformation';
+                return;
+            }
+            
+            // Calculate elapsed time in timed mode
+            let timeElapsed = null;
+            if (currentMode === 'timed' && startTime) {
+                timeElapsed = Math.floor((Date.now() - startTime) / 1000);
+            }
+            
+            fetch('/transform', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    transformation: transformation,
+                    mode: currentMode,
+                    time_elapsed: timeElapsed
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    errorDiv.textContent = 'Error: ' + data.error;
+                } else {
+                    errorDiv.textContent = '';
+                    updateMatrix(data);
+                    input.value = '';
+                }
+            })
+            .catch(error => {
+                errorDiv.textContent = 'Error: ' + error.message;
+            });
+        }
+        
+        function updateMatrix(data) {
+            const table = document.getElementById('matrix-table');
+            const tbody = table.querySelector('tbody');
+            
+            // Clear existing rows
+            tbody.innerHTML = '';
+            
+            // Add updated rows
+            const size = data.coefficients.length;
+            for (let i = 0; i < size; i++) {
+                const row = document.createElement('tr');
+                
+                // Add coefficient columns
+                for (let j = 0; j < size; j++) {
+                    const td = document.createElement('td');
+                    td.className = 'coefficient';
+                    td.textContent = data.coefficients[i][j].toFixed(2);
+                    row.appendChild(td);
+                }
+                
+                // Add divider
+                const divider = document.createElement('td');
+                divider.className = 'divider';
+                divider.textContent = '|';
+                row.appendChild(divider);
+                
+                // Add output column
+                const output = document.createElement('td');
+                output.className = 'output';
+                output.textContent = data.augmented[i].toFixed(2);
+                row.appendChild(output);
+                
+                tbody.appendChild(row);
+            }
+            
+            // Update counter based on mode
+            if (currentMode === 'fmc') {
+                document.getElementById('moves-count').textContent = data.moves;
+            }
+            
+            // Update status
+            const statusDiv = document.getElementById('status');
+            if (data.is_solved) {
+                statusDiv.textContent = '✓ Solved!';
+                statusDiv.style.color = '#4caf50';
+                const input = document.getElementById('transformation-input');
+                input.disabled = true;
+                stopTimer();
+                
+                // Show message and reload after 1.5 seconds
+                setTimeout(() => {
+                    location.href = '/';
+                }, 1500);
+            } else {
+                statusDiv.textContent = 'Not Solved';
+                statusDiv.style.color = 'inherit';
+            }
+        }
+        
+        // Allow Enter key to apply transformation
+        document.getElementById('transformation-input').addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                applyTransformation();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,23 +1,56 @@
 import random
+from collections import deque
+from copy import deepcopy
 
-def generate_matrix(size: int):
+def generate_matrix(difficulty: int = 50, compressibility: int = 50):
     """
-    Generate a solvable matrix of specified size.
-    
-    Creates a random coefficient matrix and a random solution vector,
-    then computes the augmented column (outputs) to ensure the system is solvable.
+    Generate a solvable 3x3 matrix with controllable difficulty and compressibility.
     
     Args:
-        size: The dimension of the matrix (size x size)
+        difficulty: Integer from 0 to 100 (default 50)
+                   Controls coefficient range (1-10 at 0, up to 1-110 at 100)
+        
+        compressibility: Integer from 0 to 100 (default 50)
+                        Controls optimal move count
+                        < 10 = guaranteed < 9 moves (highly structured)
+                        50 = medium compressibility
+                        100 = highly incompressible (~9 moves)
     
     Returns:
         A Matrix object that is guaranteed to be solvable
     """
-    # Generate random coefficients (values)
-    values = [[random.randint(1, 10) for _ in range(size)] for _ in range(size)]
+    # Clamp parameters to 0-100
+    difficulty = max(0, min(100, difficulty))
+    compressibility = max(0, min(100, compressibility))
+    
+    # Fixed size at 3x3
+    size = 3
+    
+    # Map difficulty to coefficient range (1-10 to 1-110)
+    max_coeff = 10 + difficulty
+    
+    # Generate coefficients based on compressibility
+    if compressibility < 10:
+        # Highly structured: guarantee < 9 moves
+        # Create a matrix with many pre-diagonal zeros and small pivots close to 1
+        values = [[0 for _ in range(size)] for _ in range(size)]
+        # Put random small values on and above diagonal
+        for i in range(size):
+            for j in range(i, size):
+                values[i][j] = random.randint(1, 3)
+    elif compressibility < 50:
+        # Moderately compressible: fewer moves
+        values = [[random.randint(1, 6) for _ in range(size)] for _ in range(size)]
+        # Add some strategic zeros
+        for i in range(size):
+            if random.random() < 0.4:
+                values[i][random.randint(0, size-1)] = 0
+    else:
+        # High compressibility: random coefficients for more moves
+        values = [[random.randint(1, max_coeff) for _ in range(size)] for _ in range(size)]
     
     # Generate a random solution vector
-    solution = [random.randint(1, 10) for _ in range(size)]
+    solution = [random.randint(1, max_coeff) for _ in range(size)]
     
     # Compute the outputs (augmented column) by multiplying matrix by solution
     outputs = []
@@ -26,6 +59,60 @@ def generate_matrix(size: int):
         outputs.append(output)
     
     return Matrix(size, values, outputs)
+
+
+def find_gods_number(matrix):
+    """
+    Find an estimate of the minimum moves using a greedy heuristic (fast approximation).
+    Not guaranteed optimal, but runs in milliseconds.
+    
+    Args:
+        matrix: A Matrix object to solve
+    
+    Returns:
+        Tuple: (estimated_min_moves, sequence_of_operations)
+    """
+    def format_factor(f):
+        """Format factor to max 2 decimals, remove .0 for whole numbers"""
+        rounded = round(f, 2)
+        if rounded.is_integer():
+            return str(int(rounded))
+        return str(rounded)
+    
+    # Create a working copy
+    work_matrix = Matrix(matrix.size, deepcopy(matrix.values), deepcopy(matrix.outputs))
+    operations = []
+    
+    # Greedy forward elimination - layer by layer
+    for col in range(work_matrix.size):
+        # Make diagonal element = 1
+        diag = work_matrix._clean_number(work_matrix.values[col][col])
+        if diag != 0 and diag != 1:
+            factor = round(1/diag, 2)
+            op = f"R{col + 1} = R{col + 1} * {format_factor(factor)}"
+            work_matrix.update(op)
+            operations.append(op)
+        
+        # Eliminate below diagonal
+        for row in range(col + 1, work_matrix.size):
+            val = work_matrix._clean_number(work_matrix.values[row][col])
+            if val != 0:
+                factor = round(val, 2)
+                op = f"R{row + 1} = R{row + 1} - {format_factor(factor)} * R{col + 1}"
+                work_matrix.update(op)
+                operations.append(op)
+    
+    # Back elimination - layer by layer
+    for col in range(work_matrix.size - 1, -1, -1):
+        for row in range(col - 1, -1, -1):
+            val = work_matrix._clean_number(work_matrix.values[row][col])
+            if val != 0:
+                factor = round(val, 2)
+                op = f"R{row + 1} = R{row + 1} - {format_factor(factor)} * R{col + 1}"
+                work_matrix.update(op)
+                operations.append(op)
+    
+    return len(operations), operations
 
 
 class Matrix:
@@ -44,15 +131,15 @@ class Matrix:
             self.matrix.append(self.outputs[i])
     
     def _clean_number(self, num):
-        """Convert floats that are whole numbers to integers, and round to avoid floating point artifacts"""
+        """Convert floats to max 2 decimal places, and round to avoid floating point artifacts"""
         if isinstance(num, float):
-            # Round to 6 decimal places to eliminate floating point artifacts
-            rounded = round(num, 6)
+            # Round to 2 decimal places maximum
+            rounded = round(num, 2)
             # If it's a whole number, return as integer
             if rounded.is_integer():
                 return int(rounded)
             # Remove trailing zeros from decimal
-            return float(f"{rounded:.6f}".rstrip('0').rstrip('.'))
+            return float(f"{rounded:.2f}".rstrip('0').rstrip('.'))
         return num
     
     def _clean_row(self, row):
@@ -88,8 +175,11 @@ class Matrix:
     def update(self, transformation: str):
         """
         Apply a row transformation to the matrix.
-        Examples: 'R1 = R1 * 2', 'R2 = 5 * R1 + R2'
+        Examples: 'R1 = R1 * 2', 'R2 = 5 * R1 + R2' (or use lowercase: 'r1 = r1 * 2')
         """
+        # Convert to uppercase to support both 'r1' and 'R1'
+        transformation = transformation.upper()
+        
         # Parse the transformation
         parts = transformation.split('=')
         if len(parts) != 2:
